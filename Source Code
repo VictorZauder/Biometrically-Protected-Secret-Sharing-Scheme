@@ -1,0 +1,339 @@
+import serial
+import secretsharing as sss
+import random 
+import serial
+import time
+import sys
+
+def square_and_multiply(base, exponent, modulus):
+    result = 1
+    while exponent > 0:
+        if exponent % 2 == 1:
+            result = (result * base) % modulus
+        base = (base * base) % modulus
+        exponent //= 2
+    return result
+
+def miller_rabin(n, t):
+    if n <= 1:
+        return False
+
+    # Write n - 1 as 2^s * r
+    r, s = n - 1, 0
+    while r % 2 == 0:
+        s += 1
+        r //= 2
+
+    # Witness loop
+    for _ in range(t):
+        a = random.randint(2, n - 2)
+        y = square_and_multiply(a, r, n)  # Compute a^r % n
+
+        if y == 1 or y == n - 1:
+            continue
+
+        for _ in range(s - 1):
+            y = square_and_multiply(y, 2, n)  # Compute y^2 % n
+            if y == n - 1:
+                break
+        else:
+            return False  # n is composite
+
+    return True  # n is likely prime
+
+
+def key_gen():
+    while True:
+        try:
+            # Generate a random decimal key
+            key = random.getrandbits(64)
+            while key % 2 == 0:
+                key = random.getrandbits(64)
+
+            if miller_rabin(key, 10):  # Ensure key is prime
+                key_binary = dec2bin(key)  # Convert to binary
+                key_hex = bin2hex(key_binary)  # Convert to hexadecimal
+                return key_hex
+        except ValueError:
+            print("Error generating key. Retrying...")
+
+# Hexadecimal to binary conversion
+def hex2bin(s):
+    int_number = int(s, 16)
+    bin_number = bin(int_number)[2:]
+    bin_number = bin_number.zfill(len(s) * 4)
+    return bin_number
+
+# Binary to hexadecimal conversion
+def bin2hex(s):
+    int_number = int(s, 2)
+    hex_number = hex(int_number)[2:]
+    hex_number = hex_number.upper()
+    return hex_number
+
+# Binary to decimal conversion
+def bin2dec(binary):
+    decimal = int(binary, 2)
+    return decimal
+
+# Decimal to binary conversion
+def dec2bin(num):
+    bin_number = bin(num)[2:]
+    bin_number = bin_number.zfill((len(bin_number) + 3) // 4 * 4)
+    return bin_number
+
+# Binary to string conversion
+def bin2str(bin_str):
+    return ''.join(chr(int(bin_str[i:i+8], 2)) for i in range(0, len(bin_str), 8))
+
+# Hexadecimal to string conversion
+def hex2pt(hex_list):
+    return ''.join(bin2str(hex2bin(hex_str)) for hex_str in hex_list)
+
+# Permute function to rearrange the bits
+def permute(k, arr, n): # k is plain text, arr is current permutation, and n is number of bits
+	permutation = ""
+	for z in range(0, n):
+		permutation = permutation + k[arr[z] - 1]
+	return permutation
+
+# shifting the bits towards left by nth shifts
+def shift_left(k, nth_shifts):
+	s = ""
+	for i in range(nth_shifts):
+		for j in range(1, len(k)):
+			s = s + k[j]
+		s = s + k[0]
+		k = s
+		s = ""
+	return k
+
+# calculating xor of two strings of binary number a and b
+def xor(a, b):
+	ans = ""
+	for i in range(len(a)):
+		if a[i] == b[i]:
+			ans = ans + "0"
+		else:
+			ans = ans + "1"
+	return ans
+
+# Table of Position of 64 bits at initial level: Initial Permutation Table
+initial_perm = list(range(1, 65))
+random.shuffle(initial_perm)
+
+# Expansion D-box Table
+exp_d = list(range(1, 33))
+for _ in range(16):
+    exp_d.append(random.randint(1, 32))
+random.shuffle(exp_d)
+
+# Straight Permutation Table
+per = list(range(1, 33))
+random.shuffle(per)
+
+# S-box Table
+sbox = []
+for _ in range(8):
+    sublist = []
+    for _ in range(4):
+        sub_sublist = list(range(16))
+        random.shuffle(sub_sublist)
+        sublist.append(sub_sublist)
+    sbox.append(sublist)
+
+# Final Permutation Table
+final_perm = [0] * len(initial_perm)
+for i, v in enumerate(initial_perm):
+    final_perm[v - 1] = i + 1
+
+
+def encrypt(pt, subkey_bin, subkey):
+
+	cipher_text_list = []
+	for i in range(0, len(pt)):
+		# Initial Permutation
+		pt[i] = hex2bin(pt[i])
+		print("\n               Block ", i + 1)
+		pt[i] = permute(pt[i], initial_perm, 64)
+		print("After initial permutation", bin2hex(pt[i]))
+
+		# Splitting
+		left = pt[i][0:32]
+		right = pt[i][32:64]
+		for j in range(0, 16):
+			# Expansion D-box: Expanding the 32 bits data into 48 bits
+			right_expanded = permute(right, exp_d, 48)
+
+			# XOR RoundKey[i] and right_expanded
+			xor_x = xor(right_expanded, subkey_bin[j])
+
+			# S-boxex: substituting the value from s-box table by calculating row and column
+			sbox_str = ""
+			for k in range(0, 8):
+				row = bin2dec(xor_x[k * 6] + xor_x[k * 6 + 5])
+				col = bin2dec(
+					xor_x[k * 6 + 1] + xor_x[k * 6 + 2] + xor_x[k * 6 + 3] + xor_x[k * 6 + 4])
+				val = sbox[k][row][col]
+				sbox_str = sbox_str + dec2bin(val)
+
+			# Straight D-box: After substituting rearranging the bits
+			sbox_str = permute(sbox_str, per, 32)
+
+			# XOR left and sbox_str
+			result = xor(left, sbox_str)
+			left = result
+
+			# Swapper
+			if(j != 15):
+				left, right = right, left
+			print("L" + str(j), "=", bin2hex(left),
+				" ", "R" + str(j), "=",bin2hex(right), " ","K" + str(j+1), "=", subkey[j])
+
+		# Combination
+		combine = left + right
+
+		# Final permutation: final rearranging of bits to get cipher text
+		cipher_text = permute(combine, final_perm, 64)
+		cipher_text = bin2hex(cipher_text)
+		cipher_text_list.append(cipher_text)
+	return cipher_text_list
+
+
+def get_pt():
+    while True:
+        pt = input('Enter your plain text. It has to be at least 32 characters long (256 bits):')  # input("Enter the plaintext (any string): ")
+        print(f'Plaintext: {pt}')
+
+        # Convert the string to ASCII values and then to binary
+        pt_binary = ''.join(format(ord(c), '08b') for c in pt)
+        num_bits = len(pt_binary)
+
+        # Print the number of bits
+        print(f'Number of bits: {num_bits}')
+
+        # If the number of bits is less than 256, ask the user to try again
+        if num_bits < 256:
+            print('Number of bits should be at least 256. Please try again.')
+            continue
+
+        # If the binary representation is less than 64 bits, add padding
+        if num_bits < 64:
+            pt_binary = pt_binary.ljust(64, '0')
+
+        # If the binary representation is more than 64 bits, break it into multiple 64-bit blocks
+        elif num_bits > 64:
+            pt_blocks = [pt_binary[i:i+64].ljust(64, '0') for i in range(0, num_bits, 64)]
+            return [bin2hex(block) for block in pt_blocks]
+
+        # If the input is valid, break the loop
+        break
+
+    return [bin2hex(pt_binary)]
+
+pt = get_pt()
+key = key_gen()
+print(f"Generated Master Key: {key}")
+preserve_hex_key = key
+
+
+
+
+# Key generation
+# --hex to binary
+key = hex2bin(key)
+
+# --parity bit drop table
+pc_1 = [i for i in range(1, 65) if i % 8 != 0]
+random.shuffle(pc_1)
+
+# getting 56 bit key from 64 bit using the parity bits
+key = permute(key, pc_1, 56)
+
+# Number of bit shifts
+shift_table = [1, 1, 2, 2,
+			2, 2, 2, 2,
+			1, 2, 2, 2,
+			2, 2, 2, 1]
+
+# Key- Compression Table : Compression of key from 56 bits to 48 bits
+numbers = list(range(1, 57))
+pc_2 = random.sample(numbers, 48)
+
+# Splitting
+left = key[0:28] # rkb for RoundKeys in binary
+right = key[28:56] # rk for RoundKeys in hexadecimal
+
+subkey_bin = []
+subkey = []
+for i in range(0, 16):
+	# Shifting the bits by nth shifts by checking from shift table
+	left = shift_left(left, shift_table[i])
+	right = shift_left(right, shift_table[i])
+
+	# Combination of left and right string
+	combine_str = left + right
+
+	# Compression of key from 56 to 48 bits
+	sub_key = permute(combine_str, pc_2, 48)
+
+	subkey_bin.append(sub_key)
+	subkey.append(bin2hex(sub_key))
+
+print("\n             DES Encryption\n")
+ciphertext = encrypt(pt, subkey_bin, subkey)
+print("\nCipher Text/ Encrypted Plain Text: ", ciphertext)
+print("\nShimir's Secret Sharing\n")
+
+# Convert the hexadecimal key to a string of characters from the charset
+key = preserve_hex_key.lower()
+# Generate shares for each fingerprint ID
+# Create a SecretSharer object
+secret = sss.SecretSharer()
+# Split the secret into shares
+shares = secret.split_secret(key, 3, 3)  # Split the secret into 3 shares with a threshold of 3
+# Print the shares
+for i, share in enumerate(shares):
+    print(f"Share {i+1}: {share}")
+
+input("\nReady to proceed?")
+# Open the serial port
+ser = serial.Serial('COM5', 9600)
+
+# Read and print lines from the serial port
+lines = []
+while True:
+    line = ser.readline().decode().strip()
+    print(line)
+    lines.append(line)
+    if len(lines) > 4:  # Keep only the last three lines before "Done."
+        lines.pop(0)
+    if line == "Done.":
+        break
+
+# Close the serial port
+ser.close()
+
+# Check if the last three lines before "Done." are '1', '124', '100'
+correct_fingerprints_found = 0
+if lines[-4:] == ['1', '124', '100', 'Done.'] or lines[-4:] == ['1', '100', '124', 'Done.'] or lines[-4:] == ['100', '124', '1', 'Done.'] or lines[-4:] == ['124', '1', '100', 'Done.']:
+    correct_fingerprints_found = 1
+
+# Print a message based on the correctness of the fingerprints
+if correct_fingerprints_found == 1:
+    print("\n Welcome Victor, Warren, and Vini.\n")
+    reconstructed_secret = sss.SecretSharer.recover_secret(shares)
+elif correct_fingerprints_found == 0:
+    print("\n Incorrect users found. The program will shut down now.")
+    sys.exit()
+
+
+key = reconstructed_secret.upper()
+print(f'\nRecovered Master Key: {key}\n')
+
+print("\n\n              DES Decryption\n")
+subkey_bin_inv = subkey_bin[::-1]
+subkey_inv = subkey[::-1]
+decrypted_text = encrypt(ciphertext, subkey_bin_inv, subkey_inv)
+decrypted_text = hex2pt(decrypted_text)
+print("\nPlain Text/ Decrypted Cipher Text: ", decrypted_text)
